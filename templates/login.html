@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TaskFlow — Login</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:#080810; --surface:#10101a; --surface2:#181825; --border:#252538;
+    --accent:#8b78fa; --accent3:#5ef0b8; --text:#e2e2f0; --muted:#5c5c7a;
+    --high:#ff6b6b; --low:#6bffaa;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:'DM Mono',monospace; background:var(--bg); color:var(--text); min-height:100vh; display:flex; align-items:center; justify-content:center; position:relative; overflow:hidden; }
+
+  /* animated bg grid */
+  body::before {
+    content:''; position:fixed; inset:0;
+    background-image: linear-gradient(var(--border) 1px, transparent 1px), linear-gradient(90deg, var(--border) 1px, transparent 1px);
+    background-size:48px 48px; opacity:0.35; pointer-events:none;
+  }
+  body::after {
+    content:''; position:fixed; inset:0;
+    background: radial-gradient(ellipse 60% 50% at 50% 50%, rgba(139,120,250,0.07) 0%, transparent 70%);
+    pointer-events:none;
+  }
+
+  .login-wrap { position:relative; z-index:10; width:100%; max-width:420px; padding:20px; }
+
+  .brand { text-align:center; margin-bottom:32px; }
+  .brand-logo { font-family:'Syne',sans-serif; font-weight:800; font-size:2rem; letter-spacing:-0.03em; }
+  .brand-logo span { color:var(--accent); }
+  .brand-sub { font-size:0.72rem; color:var(--muted); margin-top:6px; letter-spacing:0.08em; text-transform:uppercase; }
+
+  .card {
+    background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:32px;
+    box-shadow:0 24px 60px rgba(0,0,0,0.5);
+  }
+  .card-title { font-family:'Syne',sans-serif; font-weight:700; font-size:1.05rem; margin-bottom:6px; }
+  .card-sub { font-size:0.7rem; color:var(--muted); margin-bottom:26px; }
+
+  .field { display:flex; flex-direction:column; gap:6px; margin-bottom:16px; }
+  .field label { font-size:0.62rem; text-transform:uppercase; letter-spacing:0.1em; color:var(--muted); }
+  .field input {
+    background:var(--bg); border:1px solid var(--border); border-radius:8px;
+    color:var(--text); font-family:'DM Mono',monospace; font-size:0.85rem;
+    padding:11px 14px; outline:none; transition:border-color 0.18s;
+  }
+  .field input:focus { border-color:var(--accent); }
+
+  .btn-login {
+    width:100%; padding:12px; background:var(--accent); color:#fff; border:none;
+    border-radius:8px; font-family:'Syne',sans-serif; font-weight:700; font-size:0.9rem;
+    letter-spacing:0.04em; cursor:pointer; margin-top:8px; transition:all 0.18s;
+  }
+  .btn-login:hover { filter:brightness(1.15); transform:translateY(-1px); }
+  .btn-login:active { transform:translateY(0); }
+  .btn-login:disabled { opacity:0.5; cursor:not-allowed; transform:none; }
+
+  .error-msg { background:rgba(255,107,107,0.1); border:1px solid rgba(255,107,107,0.3); border-radius:7px; padding:10px 14px; font-size:0.72rem; color:var(--high); margin-top:14px; display:none; }
+  .error-msg.show { display:block; }
+
+  .demo-accounts {
+    margin-top:24px; border:1px solid var(--border); border-radius:10px; overflow:hidden;
+  }
+  .demo-title {
+    padding:10px 14px; background:var(--surface2); font-size:0.62rem;
+    text-transform:uppercase; letter-spacing:0.1em; color:var(--muted);
+    border-bottom:1px solid var(--border);
+  }
+  .demo-item {
+    padding:10px 14px; display:flex; justify-content:space-between; align-items:center;
+    border-bottom:1px solid rgba(255,255,255,0.03); cursor:pointer; transition:background 0.15s;
+  }
+  .demo-item:last-child { border:none; }
+  .demo-item:hover { background:var(--surface2); }
+  .demo-name { font-size:0.75rem; color:var(--text); }
+  .demo-role { font-size:0.6rem; padding:2px 8px; border-radius:3px; }
+  .role-manager { background:rgba(139,120,250,0.15); color:var(--accent); border:1px solid rgba(139,120,250,0.3); }
+  .role-employee { background:rgba(94,240,184,0.1); color:var(--accent3); border:1px solid rgba(94,240,184,0.25); }
+  .demo-email { font-size:0.62rem; color:var(--muted); }
+  .demo-fill { font-size:0.6rem; color:var(--muted); padding:2px 7px; border:1px solid var(--border); border-radius:4px; }
+  .demo-item:hover .demo-fill { border-color:var(--accent); color:var(--accent); }
+</style>
+</head>
+<body>
+<div class="login-wrap">
+  <div class="brand">
+    <div class="brand-logo">Task<span>Flow</span></div>
+    <div class="brand-sub">Team Automation Tracker</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Welcome back</div>
+    <div class="card-sub">Sign in to continue to your workspace</div>
+
+    <div class="field">
+      <label>Email Address</label>
+      <input type="email" id="email" placeholder="you@company.com" autocomplete="email">
+    </div>
+    <div class="field">
+      <label>Password</label>
+      <input type="password" id="password" placeholder="••••••••" autocomplete="current-password">
+    </div>
+    <button class="btn-login" id="login-btn" onclick="doLogin()">Sign In →</button>
+    <div class="error-msg" id="err-msg">Invalid email or password. Please try again.</div>
+  </div>
+
+  <div class="demo-accounts">
+    <div class="demo-title">🚀 Demo Accounts — click to autofill</div>
+    <div class="demo-item" onclick="fill('manager@taskflow.com','manager123')">
+      <div>
+        <div class="demo-name">Alex Manager</div>
+        <div class="demo-email">manager@taskflow.com</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="demo-role role-manager">Manager</span>
+        <span class="demo-fill">Autofill</span>
+      </div>
+    </div>
+    <div class="demo-item" onclick="fill('sara@taskflow.com','emp123')">
+      <div>
+        <div class="demo-name">Sara Khan</div>
+        <div class="demo-email">sara@taskflow.com</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="demo-role role-employee">Employee</span>
+        <span class="demo-fill">Autofill</span>
+      </div>
+    </div>
+    <div class="demo-item" onclick="fill('ravi@taskflow.com','emp123')">
+      <div>
+        <div class="demo-name">Ravi Sharma</div>
+        <div class="demo-email">ravi@taskflow.com</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="demo-role role-employee">Employee</span>
+        <span class="demo-fill">Autofill</span>
+      </div>
+    </div>
+    <div class="demo-item" onclick="fill('priya@taskflow.com','emp123')">
+      <div>
+        <div class="demo-name">Priya Singh</div>
+        <div class="demo-email">priya@taskflow.com</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="demo-role role-employee">Employee</span>
+        <span class="demo-fill">Autofill</span>
+      </div>
+    </div>
+    <div class="demo-item" onclick="fill('omar@taskflow.com','emp123')">
+      <div>
+        <div class="demo-name">Omar Farooq</div>
+        <div class="demo-email">omar@taskflow.com</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="demo-role role-employee">Employee</span>
+        <span class="demo-fill">Autofill</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  function fill(email, pwd) {
+    document.getElementById('email').value = email;
+    document.getElementById('password').value = pwd;
+    document.getElementById('err-msg').classList.remove('show');
+  }
+
+  document.getElementById('password').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
+  document.getElementById('email').addEventListener('keydown', e => { if(e.key==='Enter') doLogin(); });
+
+  async function doLogin() {
+    const email = document.getElementById('email').value.trim();
+    const password = document.getElementById('password').value;
+    const btn = document.getElementById('login-btn');
+    const err = document.getElementById('err-msg');
+    if (!email || !password) { err.textContent='Please enter email and password.'; err.classList.add('show'); return; }
+    btn.disabled = true; btn.textContent = 'Signing in...';
+    err.classList.remove('show');
+    try {
+      const res = await fetch('/api/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({email,password}) });
+      const data = await res.json();
+      if (!res.ok) { err.textContent = data.error || 'Login failed.'; err.classList.add('show'); btn.disabled=false; btn.textContent='Sign In →'; return; }
+      window.location.href = data.role === 'manager' ? '/manager' : '/employee';
+    } catch(e) {
+      err.textContent = 'Connection error. Is the server running?';
+      err.classList.add('show');
+      btn.disabled=false; btn.textContent='Sign In →';
+    }
+  }
+</script>
+</body>
+</html>
