@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>API Documentation — WorkPulse</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Source+Sans+3:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.11.0/swagger-ui.min.css">
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{font-family:'Source Sans 3',sans-serif;background:#f0ebe0;}
+.top-bar{background:#0d3d2e;padding:14px 28px;display:flex;align-items:center;justify-content:space-between;}
+.logo{font-family:'Playfair Display',serif;font-size:1.1rem;font-weight:700;color:#faf7f2;}
+.logo span{color:#e2c97e;}
+.back-btn{font-size:12px;padding:5px 14px;border-radius:6px;background:rgba(255,255,255,0.1);color:rgba(255,255,255,0.7);text-decoration:none;border:1px solid rgba(255,255,255,0.15);transition:all 0.15s;}
+.back-btn:hover{background:rgba(255,255,255,0.15);color:#faf7f2;}
+.badge{font-size:10px;padding:3px 10px;border-radius:12px;background:rgba(201,168,76,0.2);color:#e2c97e;border:1px solid rgba(201,168,76,0.3);}
+#swagger-ui{max-width:1200px;margin:0 auto;padding:24px;}
+.swagger-ui .topbar{display:none!important;}
+.swagger-ui .info{background:#faf7f2;border:1px solid #ccd9d3;border-radius:8px;padding:20px 24px;margin-bottom:20px;}
+.swagger-ui .info .title{font-family:'Playfair Display',serif!important;color:#1a2e25!important;}
+.swagger-ui .scheme-container{background:#faf7f2;border:1px solid #ccd9d3;border-radius:8px;padding:12px 24px;margin-bottom:16px;}
+.swagger-ui .opblock.opblock-get .opblock-summary{border-color:#155c44;}
+.swagger-ui .opblock.opblock-post .opblock-summary{border-color:#1a5c8a;}
+.swagger-ui .opblock.opblock-delete .opblock-summary{border-color:#c0392b;}
+.swagger-ui .opblock.opblock-put .opblock-summary{border-color:#c9a84c;}
+</style>
+</head>
+<body>
+<div class="top-bar">
+  <div class="logo">Work<span>Pulse</span></div>
+  <div style="display:flex;align-items:center;gap:10px">
+    <span class="badge">API v2.0</span>
+    <a href="/" class="back-btn">← Back to App</a>
+  </div>
+</div>
+<div id="swagger-ui"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/swagger-ui/5.11.0/swagger-ui-bundle.min.js"></script>
+<script>
+  window.onload = function() {
+    SwaggerUIBundle({
+      url: '/api/spec',
+      dom_id: '#swagger-ui',
+      presets: [SwaggerUIBundle.presets.apis, SwaggerUIBundle.SwaggerUIStandalonePreset],
+      layout: 'BaseLayout',
+      deepLinking: true,
+      defaultModelsExpandDepth: 1,
+      defaultModelExpandDepth: 1,
+      docExpansion: 'list',
+      filter: true,
+      showExtensions: true,
+      showCommonExtensions: true,
+    });
+  };
+</script>
+</body>
+</html>

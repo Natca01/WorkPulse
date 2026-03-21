@@ -1,6 +1,7 @@
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for
 from flask_sqlalchemy import SQLAlchemy
 from flask_wtf.csrf import CSRFProtect, CSRFError
+from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from datetime import datetime, date, timedelta
 from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -10,38 +11,33 @@ import os
 app = Flask(__name__)
 
 # ─────────────────────────────────────────
-#  CONFIGURATION — all secrets from env
+#  CONFIGURATION
 # ─────────────────────────────────────────
 app.config['SECRET_KEY']                  = os.environ.get('SECRET_KEY', 'dev-fallback-key-change-in-production')
 app.config['SQLALCHEMY_DATABASE_URI']     = os.environ.get('DATABASE_URL', 'sqlite:///workpulse.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['WTF_CSRF_ENABLED']            = True
-app.config['WTF_CSRF_TIME_LIMIT']         = 3600  # 1 hour
+app.config['WTF_CSRF_TIME_LIMIT']         = 3600
 
-db      = SQLAlchemy(app)
-csrf    = CSRFProtect(app)
-
-# Exempt JSON API routes from CSRF (they use session auth instead)
-# CSRF is enforced on form submissions only
-csrf.exempt_views = []
+db           = SQLAlchemy(app)
+csrf         = CSRFProtect(app)
+login_manager = LoginManager(app)
+login_manager.login_view = 'login_page'
 
 # ─────────────────────────────────────────
-#  INPUT VALIDATION HELPERS
+#  INPUT VALIDATION
 # ─────────────────────────────────────────
-VALID_PRIORITIES  = {'high', 'medium', 'low'}
-VALID_STATUSES    = {'todo', 'inprogress', 'done', 'overdue'}
-VALID_RECURRINGS  = {'none', 'daily', 'weekly', 'monthly'}
+VALID_PRIORITIES = {'high', 'medium', 'low'}
+VALID_STATUSES   = {'todo', 'inprogress', 'done', 'overdue'}
+VALID_RECURRINGS = {'none', 'daily', 'weekly', 'monthly'}
 
 def validate_task(data, require_all=True):
-    """Validate task input data. Returns (is_valid, error_message)."""
     errors = []
-
     title = data.get('title', '').strip()
     if require_all and not title:
         errors.append('Title is required.')
     elif title and len(title) > 200:
         errors.append('Title must be under 200 characters.')
-
     due_date = data.get('due_date', '').strip()
     if require_all and not due_date:
         errors.append('Due date is required.')
@@ -50,39 +46,30 @@ def validate_task(data, require_all=True):
             datetime.strptime(due_date, "%Y-%m-%d")
         except ValueError:
             errors.append('Due date must be in YYYY-MM-DD format.')
-
     priority = data.get('priority', 'medium')
     if priority and priority not in VALID_PRIORITIES:
         errors.append(f'Priority must be one of: {", ".join(VALID_PRIORITIES)}.')
-
     status = data.get('status')
     if status and status not in VALID_STATUSES:
         errors.append(f'Status must be one of: {", ".join(VALID_STATUSES)}.')
-
     recurring = data.get('recurring', 'none')
     if recurring and recurring not in VALID_RECURRINGS:
         errors.append(f'Recurring must be one of: {", ".join(VALID_RECURRINGS)}.')
-
     description = data.get('description', '')
     if description and len(description) > 1000:
         errors.append('Description must be under 1000 characters.')
-
     category = data.get('category', '')
     if category and len(category) > 50:
         errors.append('Category must be under 50 characters.')
-
     return (len(errors) == 0), errors
 
-def validate_user(data, require_all=True):
-    """Validate user input data. Returns (is_valid, error_message)."""
+def validate_user_data(data, require_all=True):
     errors = []
-
     name = data.get('name', '').strip()
     if require_all and not name:
         errors.append('Name is required.')
     elif name and len(name) > 100:
         errors.append('Name must be under 100 characters.')
-
     email = data.get('email', '').strip().lower()
     if require_all and not email:
         errors.append('Email is required.')
@@ -91,7 +78,6 @@ def validate_user(data, require_all=True):
             errors.append('Please enter a valid email address.')
         if len(email) > 120:
             errors.append('Email must be under 120 characters.')
-
     password = data.get('password', '')
     if require_all and not password:
         errors.append('Password is required.')
@@ -99,13 +85,12 @@ def validate_user(data, require_all=True):
         errors.append('Password must be at least 4 characters.')
     elif password and len(password) > 128:
         errors.append('Password must be under 128 characters.')
-
     return (len(errors) == 0), errors
 
 # ─────────────────────────────────────────
 #  DATABASE MODELS
 # ─────────────────────────────────────────
-class User(db.Model):
+class User(UserMixin, db.Model):
     __tablename__ = 'users'
     id         = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name       = db.Column(db.String(100), nullable=False)
@@ -117,10 +102,8 @@ class User(db.Model):
 
     def to_dict(self):
         return {
-            'id': self.id,
-            'name': self.name,
-            'email': self.email,
-            'role': self.role,
+            'id': self.id, 'name': self.name,
+            'email': self.email, 'role': self.role,
             'created_at': self.created_at.isoformat()
         }
 
@@ -142,19 +125,15 @@ class Task(db.Model):
         assignee = User.query.get(self.assigned_to)
         status   = self.get_current_status()
         return {
-            'id':            self.id,
-            'title':         self.title,
-            'description':   self.description,
-            'priority':      self.priority,
-            'due_date':      self.due_date,
-            'category':      self.category,
-            'recurring':     self.recurring,
-            'status':        status,
-            'assigned_to':   self.assigned_to,
+            'id': self.id, 'title': self.title,
+            'description': self.description, 'priority': self.priority,
+            'due_date': self.due_date, 'category': self.category,
+            'recurring': self.recurring, 'status': status,
+            'assigned_to': self.assigned_to,
             'assigned_name': assignee.name if assignee else 'Unassigned',
-            'created_by':    self.created_by,
-            'created_at':    self.created_at.isoformat(),
-            'due_label':     self.get_due_label()
+            'created_by': self.created_by,
+            'created_at': self.created_at.isoformat(),
+            'due_label': self.get_due_label()
         }
 
     def get_current_status(self):
@@ -190,14 +169,19 @@ class ActivityLog(db.Model):
 
     def to_dict(self):
         return {
-            'id':         self.id,
-            'action':     self.action,
-            'task_title': self.task_title,
-            'task_id':    self.task_id,
-            'user_id':    self.user_id,
-            'timestamp':  self.created_at.isoformat(),
+            'id': self.id, 'action': self.action,
+            'task_title': self.task_title, 'task_id': self.task_id,
+            'user_id': self.user_id,
+            'timestamp': self.created_at.isoformat(),
             'time_label': self.created_at.strftime("%b %d, %H:%M")
         }
+
+# ─────────────────────────────────────────
+#  FLASK-LOGIN USER LOADER
+# ─────────────────────────────────────────
+@login_manager.user_loader
+def load_user(user_id):
+    return User.query.get(user_id)
 
 # ─────────────────────────────────────────
 #  HELPERS
@@ -216,27 +200,15 @@ def stats_for(task_list):
     pct   = round(done / total * 100) if total else 0
     return {'total': total, 'done': done, 'overdue': over, 'inprogress': inp, 'todo': todo, 'completion_pct': pct}
 
-def require_login(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        if 'user_id' not in session:
-            return redirect(url_for('login_page'))
-        return f(*args, **kwargs)
-    return decorated
-
 def require_manager(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        if 'user_id' not in session:
+        if not current_user.is_authenticated:
             return jsonify({'error': 'Unauthorized'}), 401
-        user = User.query.get(session['user_id'])
-        if not user or user.role != 'manager':
+        if current_user.role != 'manager':
             return jsonify({'error': 'Forbidden — manager access required'}), 403
         return f(*args, **kwargs)
     return decorated
-
-def current_user():
-    return User.query.get(session.get('user_id'))
 
 # ─────────────────────────────────────────
 #  ERROR HANDLERS
@@ -266,6 +238,137 @@ def forbidden(e):
     return render_template('404.html'), 403
 
 # ─────────────────────────────────────────
+#  SWAGGER API DOCS
+# ─────────────────────────────────────────
+@app.route('/api/docs')
+def api_docs():
+    return render_template('api_docs.html')
+
+@app.route('/api/spec')
+def api_spec():
+    spec = {
+        "openapi": "3.0.0",
+        "info": {
+            "title": "WorkPulse API",
+            "version": "2.0.0",
+            "description": "REST API for WorkPulse — Company Secretariat Task Management System"
+        },
+        "tags": [
+            {"name": "Auth",     "description": "Login and logout"},
+            {"name": "Employee", "description": "Staff member task operations"},
+            {"name": "Manager",  "description": "Manager team operations"}
+        ],
+        "paths": {
+            "/api/login": {
+                "post": {
+                    "tags": ["Auth"],
+                    "summary": "Login with email and password",
+                    "requestBody": {"required": True, "content": {"application/json": {"schema": {"type": "object", "properties": {"email": {"type": "string"}, "password": {"type": "string"}}, "required": ["email", "password"]}}}},
+                    "responses": {"200": {"description": "Login successful, returns role and name"}, "401": {"description": "Invalid credentials"}}
+                }
+            },
+            "/api/logout": {
+                "post": {
+                    "tags": ["Auth"],
+                    "summary": "Logout current user",
+                    "responses": {"200": {"description": "Logged out successfully"}}
+                }
+            },
+            "/api/my/tasks": {
+                "get": {
+                    "tags": ["Employee"],
+                    "summary": "Get all tasks assigned to current user",
+                    "responses": {"200": {"description": "List of tasks and stats"}, "401": {"description": "Not logged in"}}
+                },
+                "post": {
+                    "tags": ["Employee"],
+                    "summary": "Create a new personal task",
+                    "requestBody": {"required": True, "content": {"application/json": {"schema": {"type": "object", "properties": {"title": {"type": "string"}, "due_date": {"type": "string"}, "priority": {"type": "string", "enum": ["high","medium","low"]}, "description": {"type": "string"}, "category": {"type": "string"}, "recurring": {"type": "string", "enum": ["none","daily","weekly","monthly"]}}, "required": ["title","due_date"]}}}},
+                    "responses": {"201": {"description": "Task created"}, "400": {"description": "Validation error"}}
+                }
+            },
+            "/api/my/tasks/{task_id}": {
+                "put": {
+                    "tags": ["Employee"],
+                    "summary": "Update a task",
+                    "parameters": [{"name": "task_id", "in": "path", "required": True, "schema": {"type": "string"}}],
+                    "responses": {"200": {"description": "Task updated"}, "404": {"description": "Task not found"}}
+                },
+                "delete": {
+                    "tags": ["Employee"],
+                    "summary": "Delete a task",
+                    "parameters": [{"name": "task_id", "in": "path", "required": True, "schema": {"type": "string"}}],
+                    "responses": {"200": {"description": "Task deleted"}, "404": {"description": "Task not found"}}
+                }
+            },
+            "/api/my/dashboard": {
+                "get": {
+                    "tags": ["Employee"],
+                    "summary": "Get personal dashboard data",
+                    "responses": {"200": {"description": "Dashboard stats, charts data, activity log"}}
+                }
+            },
+            "/api/manager/employees": {
+                "get": {
+                    "tags": ["Manager"],
+                    "summary": "Get all staff members",
+                    "responses": {"200": {"description": "List of employees"}, "403": {"description": "Manager access required"}}
+                },
+                "post": {
+                    "tags": ["Manager"],
+                    "summary": "Add a new staff member",
+                    "requestBody": {"required": True, "content": {"application/json": {"schema": {"type": "object", "properties": {"name": {"type": "string"}, "email": {"type": "string"}, "password": {"type": "string"}}, "required": ["name","email","password"]}}}},
+                    "responses": {"201": {"description": "Staff member created"}, "400": {"description": "Validation error or email exists"}}
+                }
+            },
+            "/api/manager/employees/{emp_id}": {
+                "delete": {
+                    "tags": ["Manager"],
+                    "summary": "Remove a staff member and all their tasks",
+                    "parameters": [{"name": "emp_id", "in": "path", "required": True, "schema": {"type": "string"}}],
+                    "responses": {"200": {"description": "Staff member removed"}, "404": {"description": "Not found"}}
+                }
+            },
+            "/api/manager/tasks": {
+                "get": {
+                    "tags": ["Manager"],
+                    "summary": "Get all tasks across team",
+                    "parameters": [{"name": "emp_id", "in": "query", "required": False, "schema": {"type": "string"}, "description": "Filter by employee ID"}],
+                    "responses": {"200": {"description": "All tasks and stats"}}
+                },
+                "post": {
+                    "tags": ["Manager"],
+                    "summary": "Assign a task to a staff member",
+                    "requestBody": {"required": True, "content": {"application/json": {"schema": {"type": "object", "properties": {"title": {"type": "string"}, "due_date": {"type": "string"}, "assigned_to": {"type": "string"}, "priority": {"type": "string"}, "description": {"type": "string"}, "category": {"type": "string"}, "recurring": {"type": "string"}}, "required": ["title","due_date","assigned_to"]}}}},
+                    "responses": {"201": {"description": "Task assigned"}, "400": {"description": "Validation error"}}
+                }
+            },
+            "/api/manager/tasks/{task_id}": {
+                "put": {
+                    "tags": ["Manager"],
+                    "summary": "Update any task",
+                    "parameters": [{"name": "task_id", "in": "path", "required": True, "schema": {"type": "string"}}],
+                    "responses": {"200": {"description": "Task updated"}}
+                },
+                "delete": {
+                    "tags": ["Manager"],
+                    "summary": "Delete any task",
+                    "parameters": [{"name": "task_id", "in": "path", "required": True, "schema": {"type": "string"}}],
+                    "responses": {"200": {"description": "Task deleted"}}
+                }
+            },
+            "/api/manager/dashboard": {
+                "get": {
+                    "tags": ["Manager"],
+                    "summary": "Get full team dashboard data",
+                    "responses": {"200": {"description": "Team stats, per-employee metrics, charts data, activity log"}}
+                }
+            }
+        }
+    }
+    return jsonify(spec)
+
+# ─────────────────────────────────────────
 #  SEED DATA
 # ─────────────────────────────────────────
 def seed_data():
@@ -280,7 +383,6 @@ def seed_data():
     )
     db.session.add(manager)
     db.session.flush()
-
     emp_data = [
         ('Sara Khan',   'sara@taskflow.com'),
         ('Ravi Sharma', 'ravi@taskflow.com'),
@@ -296,19 +398,18 @@ def seed_data():
         db.session.add(emp)
         employees.append(emp)
     db.session.flush()
-
     sample_tasks = [
-        {'title': 'Design database schema',  'desc': 'Plan PostgreSQL schema',              'pri': 'high',   'due': (today - timedelta(days=1)).strftime("%Y-%m-%d"), 'cat': 'Development',   'rec': 'none',  'emp': 0},
-        {'title': 'Write unit tests',        'desc': 'Cover API endpoints with pytest',     'pri': 'medium', 'due': today.strftime("%Y-%m-%d"),                      'cat': 'Testing',       'rec': 'none',  'emp': 0},
-        {'title': 'Team standup meeting',    'desc': 'Daily sync at 10am',                  'pri': 'low',    'due': today.strftime("%Y-%m-%d"),                      'cat': 'Meetings',      'rec': 'daily', 'emp': 0},
-        {'title': 'Fix API rate limiter',    'desc': 'Patch rate limiter bug',              'pri': 'high',   'due': (today - timedelta(days=2)).strftime("%Y-%m-%d"), 'cat': 'Backend',       'rec': 'none',  'emp': 1},
-        {'title': 'Write migration scripts', 'desc': 'DB migration for v2.1',               'pri': 'medium', 'due': today.strftime("%Y-%m-%d"),                      'cat': 'Database',      'rec': 'none',  'emp': 1},
-        {'title': 'Code review PRs',         'desc': 'Review open pull requests',           'pri': 'low',    'due': today.strftime("%Y-%m-%d"),                      'cat': 'Development',   'rec': 'daily', 'emp': 1},
-        {'title': 'Unit test auth module',   'desc': 'Achieve 90% coverage on auth',       'pri': 'high',   'due': (today + timedelta(days=1)).strftime("%Y-%m-%d"), 'cat': 'Testing',       'rec': 'none',  'emp': 2},
-        {'title': 'Update Swagger docs',     'desc': 'Document all v2 API endpoints',       'pri': 'medium', 'due': (today + timedelta(days=4)).strftime("%Y-%m-%d"), 'cat': 'Documentation', 'rec': 'none',  'emp': 2},
-        {'title': 'Setup CI/CD pipeline',    'desc': 'Configure GitHub Actions',            'pri': 'high',   'due': (today - timedelta(days=1)).strftime("%Y-%m-%d"), 'cat': 'DevOps',        'rec': 'none',  'emp': 3},
-        {'title': 'Monitor server metrics',  'desc': 'Check CPU/memory dashboards daily',   'pri': 'medium', 'due': today.strftime("%Y-%m-%d"),                      'cat': 'DevOps',        'rec': 'daily', 'emp': 3},
-        {'title': 'Update SSL certificates', 'desc': 'Renew certs before expiry',           'pri': 'high',   'due': (today + timedelta(days=5)).strftime("%Y-%m-%d"), 'cat': 'Security',      'rec': 'none',  'emp': 3},
+        {'title': 'Design database schema',  'desc': 'Plan PostgreSQL schema',            'pri': 'high',   'due': (today - timedelta(days=1)).strftime("%Y-%m-%d"), 'cat': 'Development',   'rec': 'none',  'emp': 0},
+        {'title': 'Write unit tests',        'desc': 'Cover API endpoints with pytest',   'pri': 'medium', 'due': today.strftime("%Y-%m-%d"),                      'cat': 'Testing',       'rec': 'none',  'emp': 0},
+        {'title': 'Team standup meeting',    'desc': 'Daily sync at 10am',                'pri': 'low',    'due': today.strftime("%Y-%m-%d"),                      'cat': 'Meetings',      'rec': 'daily', 'emp': 0},
+        {'title': 'Fix API rate limiter',    'desc': 'Patch rate limiter bug',            'pri': 'high',   'due': (today - timedelta(days=2)).strftime("%Y-%m-%d"), 'cat': 'Backend',       'rec': 'none',  'emp': 1},
+        {'title': 'Write migration scripts', 'desc': 'DB migration for v2.1',             'pri': 'medium', 'due': today.strftime("%Y-%m-%d"),                      'cat': 'Database',      'rec': 'none',  'emp': 1},
+        {'title': 'Code review PRs',         'desc': 'Review open pull requests',         'pri': 'low',    'due': today.strftime("%Y-%m-%d"),                      'cat': 'Development',   'rec': 'daily', 'emp': 1},
+        {'title': 'Unit test auth module',   'desc': 'Achieve 90% coverage on auth',     'pri': 'high',   'due': (today + timedelta(days=1)).strftime("%Y-%m-%d"), 'cat': 'Testing',       'rec': 'none',  'emp': 2},
+        {'title': 'Update Swagger docs',     'desc': 'Document all v2 API endpoints',     'pri': 'medium', 'due': (today + timedelta(days=4)).strftime("%Y-%m-%d"), 'cat': 'Documentation', 'rec': 'none',  'emp': 2},
+        {'title': 'Setup CI/CD pipeline',    'desc': 'Configure GitHub Actions',          'pri': 'high',   'due': (today - timedelta(days=1)).strftime("%Y-%m-%d"), 'cat': 'DevOps',        'rec': 'none',  'emp': 3},
+        {'title': 'Monitor server metrics',  'desc': 'Check CPU/memory dashboards daily', 'pri': 'medium', 'due': today.strftime("%Y-%m-%d"),                      'cat': 'DevOps',        'rec': 'daily', 'emp': 3},
+        {'title': 'Update SSL certificates', 'desc': 'Renew certs before expiry',         'pri': 'high',   'due': (today + timedelta(days=5)).strftime("%Y-%m-%d"), 'cat': 'Security',      'rec': 'none',  'emp': 3},
     ]
     for s in sample_tasks:
         emp  = employees[s['emp']]
@@ -327,14 +428,14 @@ def seed_data():
 # ─────────────────────────────────────────
 @app.route('/')
 def root():
-    if 'user_id' in session:
-        u = current_user()
-        if u:
-            return redirect(url_for('manager_page') if u.role == 'manager' else url_for('employee_page'))
+    if current_user.is_authenticated:
+        return redirect(url_for('manager_page') if current_user.role == 'manager' else url_for('employee_page'))
     return redirect(url_for('login_page'))
 
 @app.route('/login', methods=['GET'])
 def login_page():
+    if current_user.is_authenticated:
+        return redirect(url_for('root'))
     return render_template('login.html')
 
 @app.route('/api/login', methods=['POST'])
@@ -352,50 +453,45 @@ def api_login():
     user = User.query.filter_by(email=email).first()
     if not user or not check_password_hash(user.password, pwd):
         return jsonify({'error': 'Invalid email or password'}), 401
-    session['user_id'] = user.id
+    login_user(user, remember=True)
     return jsonify({'role': user.role, 'name': user.name})
 
 @app.route('/api/logout', methods=['POST'])
 @csrf.exempt
 def api_logout():
-    session.clear()
+    logout_user()
     return jsonify({'ok': True})
 
 @app.route('/manager')
-@require_login
+@login_required
 def manager_page():
-    u = current_user()
-    if u.role != 'manager':
+    if current_user.role != 'manager':
         return redirect(url_for('employee_page'))
-    return render_template('manager.html', user=u)
+    return render_template('manager.html', user=current_user)
 
 @app.route('/employee')
-@require_login
+@login_required
 def employee_page():
-    u = current_user()
-    if u.role == 'manager':
+    if current_user.role == 'manager':
         return redirect(url_for('manager_page'))
-    return render_template('employee.html', user=u)
+    return render_template('employee.html', user=current_user)
 
 # ─────────────────────────────────────────
 #  EMPLOYEE API
 # ─────────────────────────────────────────
 @app.route('/api/my/tasks', methods=['GET'])
-@require_login
+@login_required
 @csrf.exempt
 def my_tasks():
-    uid   = session['user_id']
-    rows  = Task.query.filter_by(assigned_to=uid).all()
+    rows  = Task.query.filter_by(assigned_to=current_user.id).all()
     tasks = sorted([t.to_dict() for t in rows], key=lambda x: {'high': 0, 'medium': 1, 'low': 2}.get(x['priority'], 3))
     return jsonify({'tasks': tasks, 'stats': stats_for(tasks)})
 
 @app.route('/api/my/tasks', methods=['POST'])
-@require_login
+@login_required
 @csrf.exempt
 def create_my_task():
-    uid  = session['user_id']
-    user = current_user()
-    if user.role == 'manager':
+    if current_user.role == 'manager':
         return jsonify({'error': 'Managers assign tasks via manager panel'}), 403
     data = request.json
     if not data:
@@ -410,23 +506,23 @@ def create_my_task():
         due_date=data['due_date'],
         category=data.get('category', 'General').strip(),
         recurring=data.get('recurring', 'none'),
-        status='todo', assigned_to=uid, created_by=uid
+        status='todo',
+        assigned_to=current_user.id,
+        created_by=current_user.id
     )
     db.session.add(task)
     db.session.commit()
-    log_activity('created', task.title, task.id, uid)
+    log_activity('created', task.title, task.id, current_user.id)
     return jsonify(task.to_dict()), 201
 
 @app.route('/api/my/tasks/<tid>', methods=['PUT'])
-@require_login
+@login_required
 @csrf.exempt
 def update_my_task(tid):
-    uid  = session['user_id']
-    user = current_user()
     task = Task.query.get(tid)
     if not task:
         return jsonify({'error': 'Task not found'}), 404
-    if user.role == 'employee' and task.assigned_to != uid:
+    if current_user.role == 'employee' and task.assigned_to != current_user.id:
         return jsonify({'error': 'Forbidden'}), 403
     data = request.json
     if not data:
@@ -440,7 +536,7 @@ def update_my_task(tid):
     if 'status' in data:
         task.status = data['status']
         if data['status'] == 'done':
-            log_activity('completed', task.title, tid, uid)
+            log_activity('completed', task.title, tid, current_user.id)
             if task.recurring != 'none':
                 old_due = datetime.strptime(task.due_date, "%Y-%m-%d").date()
                 if task.recurring == 'daily':
@@ -458,36 +554,33 @@ def update_my_task(tid):
                     status='todo', assigned_to=task.assigned_to, created_by=task.created_by
                 )
                 db.session.add(new_task)
-                log_activity('auto-created (recurring)', task.title, new_task.id, uid)
+                log_activity('auto-created (recurring)', task.title, new_task.id, current_user.id)
         else:
-            log_activity(f'moved to {data["status"]}', task.title, tid, uid)
+            log_activity(f'moved to {data["status"]}', task.title, tid, current_user.id)
     else:
-        log_activity('updated', task.title, tid, uid)
+        log_activity('updated', task.title, tid, current_user.id)
     db.session.commit()
     return jsonify(task.to_dict())
 
 @app.route('/api/my/tasks/<tid>', methods=['DELETE'])
-@require_login
+@login_required
 @csrf.exempt
 def delete_my_task(tid):
-    uid  = session['user_id']
-    user = current_user()
     task = Task.query.get(tid)
     if not task:
         return jsonify({'error': 'Task not found'}), 404
-    if user.role == 'employee' and task.assigned_to != uid:
+    if current_user.role == 'employee' and task.assigned_to != current_user.id:
         return jsonify({'error': 'Forbidden'}), 403
-    log_activity('deleted', task.title, tid, uid)
+    log_activity('deleted', task.title, tid, current_user.id)
     db.session.delete(task)
     db.session.commit()
     return jsonify({'ok': True})
 
 @app.route('/api/my/dashboard', methods=['GET'])
-@require_login
+@login_required
 @csrf.exempt
 def my_dashboard():
-    uid   = session['user_id']
-    rows  = Task.query.filter_by(assigned_to=uid).all()
+    rows  = Task.query.filter_by(assigned_to=current_user.id).all()
     tasks = [t.to_dict() for t in rows]
     s     = stats_for(tasks)
     pb    = {'high': 0, 'medium': 0, 'low': 0}
@@ -512,9 +605,9 @@ def my_dashboard():
         score -= (s['overdue'] / s['total']) * 30
         score += min(s['done'] * 5, 40)
         score = max(0, min(100, round(score)))
-    logs = ActivityLog.query.filter_by(user_id=uid).order_by(ActivityLog.created_at.desc()).limit(15).all()
+    logs = ActivityLog.query.filter_by(user_id=current_user.id).order_by(ActivityLog.created_at.desc()).limit(15).all()
     return jsonify({
-        'overview':          {**s, 'productivity_score': score},
+        'overview':           {**s, 'productivity_score': score},
         'priority_breakdown': pb,
         'categories':         [{'name': k, **v} for k, v in cat_map.items()],
         'upcoming_days':      upcoming,
@@ -525,6 +618,7 @@ def my_dashboard():
 #  MANAGER API
 # ─────────────────────────────────────────
 @app.route('/api/manager/employees', methods=['GET'])
+@login_required
 @require_manager
 @csrf.exempt
 def get_employees():
@@ -532,13 +626,14 @@ def get_employees():
     return jsonify({'employees': [e.to_dict() for e in emps]})
 
 @app.route('/api/manager/employees', methods=['POST'])
+@login_required
 @require_manager
 @csrf.exempt
 def add_employee():
     data = request.json
     if not data:
         return jsonify({'error': 'No data provided'}), 400
-    valid, errors = validate_user(data, require_all=True)
+    valid, errors = validate_user_data(data, require_all=True)
     if not valid:
         return jsonify({'error': ' '.join(errors)}), 400
     email = data['email'].strip().lower()
@@ -551,10 +646,11 @@ def add_employee():
     )
     db.session.add(emp)
     db.session.commit()
-    log_activity('employee added', data['name'], None, session['user_id'])
+    log_activity('employee added', data['name'], None, current_user.id)
     return jsonify(emp.to_dict()), 201
 
 @app.route('/api/manager/employees/<eid>', methods=['DELETE'])
+@login_required
 @require_manager
 @csrf.exempt
 def remove_employee(eid):
@@ -562,12 +658,13 @@ def remove_employee(eid):
     if not emp or emp.role == 'manager':
         return jsonify({'error': 'Staff member not found'}), 404
     Task.query.filter_by(assigned_to=eid).delete()
-    log_activity('employee removed', emp.name, None, session['user_id'])
+    log_activity('employee removed', emp.name, None, current_user.id)
     db.session.delete(emp)
     db.session.commit()
     return jsonify({'ok': True})
 
 @app.route('/api/manager/tasks', methods=['GET'])
+@login_required
 @require_manager
 @csrf.exempt
 def all_tasks():
@@ -577,10 +674,11 @@ def all_tasks():
     return jsonify({'tasks': tasks, 'stats': stats_for(tasks)})
 
 @app.route('/api/manager/tasks', methods=['POST'])
+@login_required
 @require_manager
 @csrf.exempt
 def assign_task():
-    data        = request.json
+    data = request.json
     if not data:
         return jsonify({'error': 'No data provided'}), 400
     valid, errors = validate_task(data, require_all=True)
@@ -589,7 +687,6 @@ def assign_task():
     assigned_to = data.get('assigned_to', '')
     if not assigned_to or not User.query.get(assigned_to):
         return jsonify({'error': 'Please select a valid staff member'}), 404
-    uid  = session['user_id']
     task = Task(
         title=data['title'].strip(),
         description=data.get('description', '').strip(),
@@ -597,15 +694,16 @@ def assign_task():
         due_date=data['due_date'],
         category=data.get('category', 'General').strip(),
         recurring=data.get('recurring', 'none'),
-        status='todo', assigned_to=assigned_to, created_by=uid
+        status='todo', assigned_to=assigned_to, created_by=current_user.id
     )
     db.session.add(task)
     db.session.commit()
     assignee = User.query.get(assigned_to)
-    log_activity(f'assigned to {assignee.name}', task.title, task.id, uid)
+    log_activity(f'assigned to {assignee.name}', task.title, task.id, current_user.id)
     return jsonify(task.to_dict()), 201
 
 @app.route('/api/manager/tasks/<tid>', methods=['PUT'])
+@login_required
 @require_manager
 @csrf.exempt
 def update_any_task(tid):
@@ -623,25 +721,27 @@ def update_any_task(tid):
             setattr(task, field, data[field].strip() if isinstance(data[field], str) else data[field])
     if 'status' in data:
         task.status = data['status']
-        log_activity(f'status → {data["status"]}', task.title, tid, session['user_id'])
+        log_activity(f'status → {data["status"]}', task.title, tid, current_user.id)
     else:
-        log_activity('updated', task.title, tid, session['user_id'])
+        log_activity('updated', task.title, tid, current_user.id)
     db.session.commit()
     return jsonify(task.to_dict())
 
 @app.route('/api/manager/tasks/<tid>', methods=['DELETE'])
+@login_required
 @require_manager
 @csrf.exempt
 def delete_any_task(tid):
     task = Task.query.get(tid)
     if not task:
         return jsonify({'error': 'Task not found'}), 404
-    log_activity('deleted', task.title, tid, session['user_id'])
+    log_activity('deleted', task.title, tid, current_user.id)
     db.session.delete(task)
     db.session.commit()
     return jsonify({'ok': True})
 
 @app.route('/api/manager/dashboard', methods=['GET'])
+@login_required
 @require_manager
 @csrf.exempt
 def manager_dashboard():
@@ -670,11 +770,11 @@ def manager_dashboard():
         upcoming.append({'label': d.strftime("%a"), 'count': cnt})
     logs = ActivityLog.query.order_by(ActivityLog.created_at.desc()).limit(20).all()
     return jsonify({
-        'overview':          s,
-        'employee_stats':    emp_stats,
+        'overview':           s,
+        'employee_stats':     emp_stats,
         'priority_breakdown': pb,
-        'upcoming_days':     upcoming,
-        'activity_log':      [l.to_dict() for l in logs]
+        'upcoming_days':      upcoming,
+        'activity_log':       [l.to_dict() for l in logs]
     })
 
 # ─────────────────────────────────────────
