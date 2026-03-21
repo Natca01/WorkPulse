@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, session, redirect, url_for
+from flask import Flask, render_template, request, jsonify, session, redirect, url_for, Response, make_response
 from flask_sqlalchemy import SQLAlchemy
 from flask_wtf.csrf import CSRFProtect, CSRFError
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
@@ -7,20 +7,22 @@ from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
 import uuid
 import os
+import csv
+import io
 
 app = Flask(__name__)
 
 # ─────────────────────────────────────────
 #  CONFIGURATION
 # ─────────────────────────────────────────
-app.config['SECRET_KEY']                  = os.environ.get('SECRET_KEY', 'dev-fallback-key-change-in-production')
-app.config['SQLALCHEMY_DATABASE_URI']     = os.environ.get('DATABASE_URL', 'sqlite:///workpulse.db')
+app.config['SECRET_KEY']                     = os.environ.get('SECRET_KEY', 'dev-fallback-key-change-in-production')
+app.config['SQLALCHEMY_DATABASE_URI']        = os.environ.get('DATABASE_URL', 'sqlite:///workpulse.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['WTF_CSRF_ENABLED']            = True
-app.config['WTF_CSRF_TIME_LIMIT']         = 3600
+app.config['WTF_CSRF_ENABLED']               = True
+app.config['WTF_CSRF_TIME_LIMIT']            = 3600
 
-db           = SQLAlchemy(app)
-csrf         = CSRFProtect(app)
+db            = SQLAlchemy(app)
+csrf          = CSRFProtect(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login_page'
 
@@ -250,123 +252,297 @@ def api_spec():
         "openapi": "3.0.0",
         "info": {
             "title": "WorkPulse API",
-            "version": "2.0.0",
+            "version": "3.0.0",
             "description": "REST API for WorkPulse — Company Secretariat Task Management System"
         },
         "tags": [
             {"name": "Auth",     "description": "Login and logout"},
             {"name": "Employee", "description": "Staff member task operations"},
-            {"name": "Manager",  "description": "Manager team operations"}
+            {"name": "Manager",  "description": "Manager team operations"},
+            {"name": "Exports",  "description": "CSV and PDF report exports"}
         ],
         "paths": {
-            "/api/login": {
-                "post": {
-                    "tags": ["Auth"],
-                    "summary": "Login with email and password",
-                    "requestBody": {"required": True, "content": {"application/json": {"schema": {"type": "object", "properties": {"email": {"type": "string"}, "password": {"type": "string"}}, "required": ["email", "password"]}}}},
-                    "responses": {"200": {"description": "Login successful, returns role and name"}, "401": {"description": "Invalid credentials"}}
-                }
-            },
-            "/api/logout": {
-                "post": {
-                    "tags": ["Auth"],
-                    "summary": "Logout current user",
-                    "responses": {"200": {"description": "Logged out successfully"}}
-                }
-            },
+            "/api/login": {"post": {"tags": ["Auth"], "summary": "Login", "responses": {"200": {"description": "OK"}}}},
+            "/api/logout": {"post": {"tags": ["Auth"], "summary": "Logout", "responses": {"200": {"description": "OK"}}}},
             "/api/my/tasks": {
-                "get": {
-                    "tags": ["Employee"],
-                    "summary": "Get all tasks assigned to current user",
-                    "responses": {"200": {"description": "List of tasks and stats"}, "401": {"description": "Not logged in"}}
-                },
-                "post": {
-                    "tags": ["Employee"],
-                    "summary": "Create a new personal task",
-                    "requestBody": {"required": True, "content": {"application/json": {"schema": {"type": "object", "properties": {"title": {"type": "string"}, "due_date": {"type": "string"}, "priority": {"type": "string", "enum": ["high","medium","low"]}, "description": {"type": "string"}, "category": {"type": "string"}, "recurring": {"type": "string", "enum": ["none","daily","weekly","monthly"]}}, "required": ["title","due_date"]}}}},
-                    "responses": {"201": {"description": "Task created"}, "400": {"description": "Validation error"}}
-                }
+                "get":  {"tags": ["Employee"], "summary": "Get my tasks",   "responses": {"200": {"description": "Tasks list"}}},
+                "post": {"tags": ["Employee"], "summary": "Create my task", "responses": {"201": {"description": "Created"}}}
             },
             "/api/my/tasks/{task_id}": {
-                "put": {
-                    "tags": ["Employee"],
-                    "summary": "Update a task",
-                    "parameters": [{"name": "task_id", "in": "path", "required": True, "schema": {"type": "string"}}],
-                    "responses": {"200": {"description": "Task updated"}, "404": {"description": "Task not found"}}
-                },
-                "delete": {
-                    "tags": ["Employee"],
-                    "summary": "Delete a task",
-                    "parameters": [{"name": "task_id", "in": "path", "required": True, "schema": {"type": "string"}}],
-                    "responses": {"200": {"description": "Task deleted"}, "404": {"description": "Task not found"}}
-                }
+                "put":    {"tags": ["Employee"], "summary": "Update task", "responses": {"200": {"description": "Updated"}}},
+                "delete": {"tags": ["Employee"], "summary": "Delete task", "responses": {"200": {"description": "Deleted"}}}
             },
-            "/api/my/dashboard": {
-                "get": {
-                    "tags": ["Employee"],
-                    "summary": "Get personal dashboard data",
-                    "responses": {"200": {"description": "Dashboard stats, charts data, activity log"}}
-                }
-            },
+            "/api/my/dashboard": {"get": {"tags": ["Employee"], "summary": "My dashboard data", "responses": {"200": {"description": "Dashboard"}}}},
             "/api/manager/employees": {
-                "get": {
-                    "tags": ["Manager"],
-                    "summary": "Get all staff members",
-                    "responses": {"200": {"description": "List of employees"}, "403": {"description": "Manager access required"}}
-                },
-                "post": {
-                    "tags": ["Manager"],
-                    "summary": "Add a new staff member",
-                    "requestBody": {"required": True, "content": {"application/json": {"schema": {"type": "object", "properties": {"name": {"type": "string"}, "email": {"type": "string"}, "password": {"type": "string"}}, "required": ["name","email","password"]}}}},
-                    "responses": {"201": {"description": "Staff member created"}, "400": {"description": "Validation error or email exists"}}
-                }
+                "get":  {"tags": ["Manager"], "summary": "List staff",    "responses": {"200": {"description": "Staff list"}}},
+                "post": {"tags": ["Manager"], "summary": "Add staff",     "responses": {"201": {"description": "Created"}}}
             },
-            "/api/manager/employees/{emp_id}": {
-                "delete": {
-                    "tags": ["Manager"],
-                    "summary": "Remove a staff member and all their tasks",
-                    "parameters": [{"name": "emp_id", "in": "path", "required": True, "schema": {"type": "string"}}],
-                    "responses": {"200": {"description": "Staff member removed"}, "404": {"description": "Not found"}}
-                }
-            },
+            "/api/manager/employees/{emp_id}": {"delete": {"tags": ["Manager"], "summary": "Remove staff", "responses": {"200": {"description": "Removed"}}}},
             "/api/manager/tasks": {
-                "get": {
-                    "tags": ["Manager"],
-                    "summary": "Get all tasks across team",
-                    "parameters": [{"name": "emp_id", "in": "query", "required": False, "schema": {"type": "string"}, "description": "Filter by employee ID"}],
-                    "responses": {"200": {"description": "All tasks and stats"}}
-                },
-                "post": {
-                    "tags": ["Manager"],
-                    "summary": "Assign a task to a staff member",
-                    "requestBody": {"required": True, "content": {"application/json": {"schema": {"type": "object", "properties": {"title": {"type": "string"}, "due_date": {"type": "string"}, "assigned_to": {"type": "string"}, "priority": {"type": "string"}, "description": {"type": "string"}, "category": {"type": "string"}, "recurring": {"type": "string"}}, "required": ["title","due_date","assigned_to"]}}}},
-                    "responses": {"201": {"description": "Task assigned"}, "400": {"description": "Validation error"}}
-                }
+                "get":  {"tags": ["Manager"], "summary": "All tasks",    "responses": {"200": {"description": "Tasks"}}},
+                "post": {"tags": ["Manager"], "summary": "Assign task",  "responses": {"201": {"description": "Assigned"}}}
             },
             "/api/manager/tasks/{task_id}": {
-                "put": {
-                    "tags": ["Manager"],
-                    "summary": "Update any task",
-                    "parameters": [{"name": "task_id", "in": "path", "required": True, "schema": {"type": "string"}}],
-                    "responses": {"200": {"description": "Task updated"}}
-                },
-                "delete": {
-                    "tags": ["Manager"],
-                    "summary": "Delete any task",
-                    "parameters": [{"name": "task_id", "in": "path", "required": True, "schema": {"type": "string"}}],
-                    "responses": {"200": {"description": "Task deleted"}}
+                "put":    {"tags": ["Manager"], "summary": "Update any task", "responses": {"200": {"description": "Updated"}}},
+                "delete": {"tags": ["Manager"], "summary": "Delete any task", "responses": {"200": {"description": "Deleted"}}}
+            },
+            "/api/manager/dashboard": {"get": {"tags": ["Manager"], "summary": "Team dashboard", "responses": {"200": {"description": "Dashboard"}}}},
+            "/api/export/csv": {
+                "get": {
+                    "tags": ["Exports"],
+                    "summary": "Export all tasks as CSV",
+                    "description": "Downloads a CSV file of all team tasks. Manager only. Optional filter: ?emp_id=xxx&status=xxx",
+                    "parameters": [
+                        {"name": "emp_id", "in": "query", "required": False, "schema": {"type": "string"}, "description": "Filter by employee ID"},
+                        {"name": "status", "in": "query", "required": False, "schema": {"type": "string"}, "description": "Filter by status"}
+                    ],
+                    "responses": {"200": {"description": "CSV file download"}, "403": {"description": "Manager only"}}
                 }
             },
-            "/api/manager/dashboard": {
+            "/api/export/pdf": {
                 "get": {
-                    "tags": ["Manager"],
-                    "summary": "Get full team dashboard data",
-                    "responses": {"200": {"description": "Team stats, per-employee metrics, charts data, activity log"}}
+                    "tags": ["Exports"],
+                    "summary": "Export team productivity report as PDF",
+                    "description": "Downloads a formatted PDF report with team stats, per-employee breakdown and task list. Manager only.",
+                    "responses": {"200": {"description": "PDF file download"}, "403": {"description": "Manager only"}}
+                }
+            },
+            "/api/export/my-csv": {
+                "get": {
+                    "tags": ["Exports"],
+                    "summary": "Export my own tasks as CSV",
+                    "description": "Staff member downloads their own tasks as CSV.",
+                    "responses": {"200": {"description": "CSV file download"}}
                 }
             }
         }
     }
     return jsonify(spec)
+
+# ─────────────────────────────────────────
+#  CSV EXPORT HELPER
+# ─────────────────────────────────────────
+def generate_csv(task_list, filename):
+    """Generate a CSV file from a list of task dicts."""
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    # Header row
+    writer.writerow([
+        'Title', 'Description', 'Priority', 'Status',
+        'Due Date', 'Category', 'Recurring',
+        'Assigned To', 'Created At'
+    ])
+
+    # Data rows
+    for t in task_list:
+        writer.writerow([
+            t.get('title', ''),
+            t.get('description', ''),
+            t.get('priority', '').capitalize(),
+            t.get('status', '').capitalize(),
+            t.get('due_date', ''),
+            t.get('category', ''),
+            t.get('recurring', 'none').capitalize(),
+            t.get('assigned_name', ''),
+            t.get('created_at', '')[:10] if t.get('created_at') else ''
+        ])
+
+    output.seek(0)
+    return Response(
+        output.getvalue(),
+        mimetype='text/csv',
+        headers={'Content-Disposition': f'attachment; filename={filename}'}
+    )
+
+# ─────────────────────────────────────────
+#  PDF REPORT HELPER
+# ─────────────────────────────────────────
+def generate_pdf_html(task_list, stats, emp_stats=None, title="WorkPulse Report"):
+    """Generate an HTML page styled for PDF printing."""
+    today = date.today().strftime("%d %B %Y")
+
+    # Build per-employee section
+    emp_section = ""
+    if emp_stats:
+        rows = ""
+        for e in emp_stats:
+            score_color = "#1a6b35" if e['score'] >= 70 else "#c9a84c" if e['score'] >= 40 else "#c0392b"
+            rows += f"""
+            <tr>
+                <td>{e['name']}</td>
+                <td style="text-align:center">{e['total']}</td>
+                <td style="text-align:center;color:#1a6b35"><b>{e['done']}</b></td>
+                <td style="text-align:center;color:#c0392b"><b>{e['overdue']}</b></td>
+                <td style="text-align:center;color:#1a5c8a">{e['inprogress']}</td>
+                <td style="text-align:center;color:{score_color}"><b>{e['score']}</b></td>
+            </tr>"""
+        emp_section = f"""
+        <div class="section">
+            <div class="section-title">Staff Performance Summary</div>
+            <table>
+                <thead><tr>
+                    <th>Staff Member</th><th>Total</th><th>Done</th>
+                    <th>Overdue</th><th>In Progress</th><th>Score</th>
+                </tr></thead>
+                <tbody>{rows}</tbody>
+            </table>
+        </div>"""
+
+    # Build task rows
+    task_rows = ""
+    for t in task_list:
+        pri_color = "#c0392b" if t['priority'] == 'high' else "#c9a84c" if t['priority'] == 'medium' else "#1a6b35"
+        sta_color = "#c0392b" if t['status'] == 'overdue' else "#1a6b35" if t['status'] == 'done' else "#1a5c8a" if t['status'] == 'inprogress' else "#7a9488"
+        task_rows += f"""
+        <tr>
+            <td>{t['title']}</td>
+            <td style="color:{pri_color};font-weight:600">{t['priority'].capitalize()}</td>
+            <td style="color:{sta_color};font-weight:600">{t['status'].capitalize()}</td>
+            <td>{t['due_date']}</td>
+            <td>{t.get('assigned_name', '')}</td>
+            <td>{t['category']}</td>
+        </tr>"""
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>{title}</title>
+<style>
+  * {{ margin:0; padding:0; box-sizing:border-box; }}
+  body {{ font-family: 'Georgia', serif; color: #1a2e25; background: #fff; padding: 40px; font-size: 12px; }}
+  .header {{ border-bottom: 3px solid #0d3d2e; padding-bottom: 20px; margin-bottom: 30px; display: flex; justify-content: space-between; align-items: flex-end; }}
+  .logo {{ font-size: 24px; font-weight: bold; color: #0d3d2e; }}
+  .logo span {{ color: #c9a84c; }}
+  .report-meta {{ text-align: right; color: #7a9488; font-size: 11px; }}
+  .report-title {{ font-size: 18px; font-weight: bold; color: #0d3d2e; margin-bottom: 4px; }}
+  .kpi-row {{ display: flex; gap: 16px; margin-bottom: 30px; }}
+  .kpi {{ flex: 1; border: 1px solid #ccd9d3; border-radius: 6px; padding: 14px; border-top: 3px solid #155c44; text-align: center; }}
+  .kpi.over {{ border-top-color: #c0392b; }}
+  .kpi.done {{ border-top-color: #1a6b35; }}
+  .kpi.prog {{ border-top-color: #1a5c8a; }}
+  .kpi.gold {{ border-top-color: #c9a84c; }}
+  .kpi-num {{ font-size: 28px; font-weight: bold; color: #1a2e25; }}
+  .kpi-lbl {{ font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em; color: #7a9488; margin-top: 4px; }}
+  .section {{ margin-bottom: 28px; }}
+  .section-title {{ font-size: 14px; font-weight: bold; color: #0d3d2e; border-bottom: 1px solid #ccd9d3; padding-bottom: 8px; margin-bottom: 14px; text-transform: uppercase; letter-spacing: 0.06em; }}
+  table {{ width: 100%; border-collapse: collapse; font-size: 11px; }}
+  th {{ background: #0d3d2e; color: #faf7f2; padding: 8px 10px; text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; }}
+  td {{ padding: 7px 10px; border-bottom: 1px solid #e8e0d0; }}
+  tr:nth-child(even) td {{ background: #f9f6f0; }}
+  .footer {{ margin-top: 40px; border-top: 1px solid #ccd9d3; padding-top: 14px; text-align: center; font-size: 10px; color: #7a9488; }}
+  @media print {{
+    body {{ padding: 20px; }}
+    .no-print {{ display: none; }}
+  }}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <div class="logo">Work<span>Pulse</span></div>
+    <div style="font-size:10px;color:#7a9488;margin-top:4px;text-transform:uppercase;letter-spacing:0.15em;">Company Secretariat Division</div>
+  </div>
+  <div class="report-meta">
+    <div class="report-title">{title}</div>
+    <div>Generated: {today}</div>
+    <div style="color:#c0392b;font-size:10px;margin-top:2px;">CONFIDENTIAL — Internal Use Only</div>
+  </div>
+</div>
+
+<div class="kpi-row">
+  <div class="kpi"><div class="kpi-num">{stats['total']}</div><div class="kpi-lbl">Total Tasks</div></div>
+  <div class="kpi done"><div class="kpi-num">{stats['done']}</div><div class="kpi-lbl">Completed</div></div>
+  <div class="kpi over"><div class="kpi-num">{stats['overdue']}</div><div class="kpi-lbl">Overdue</div></div>
+  <div class="kpi prog"><div class="kpi-num">{stats['inprogress']}</div><div class="kpi-lbl">In Progress</div></div>
+  <div class="kpi gold"><div class="kpi-num">{stats['completion_pct']}%</div><div class="kpi-lbl">Completion Rate</div></div>
+</div>
+
+{emp_section}
+
+<div class="section">
+  <div class="section-title">Task Details</div>
+  <table>
+    <thead><tr>
+      <th>Task Title</th><th>Priority</th><th>Status</th>
+      <th>Due Date</th><th>Assigned To</th><th>Category</th>
+    </tr></thead>
+    <tbody>{task_rows}</tbody>
+  </table>
+</div>
+
+<div class="footer">
+  WorkPulse · Company Secretariat · Confidential Internal Report · {today}
+</div>
+
+<div class="no-print" style="margin-top:30px;text-align:center">
+  <button onclick="window.print()" style="padding:10px 24px;background:#0d3d2e;color:#faf7f2;border:none;border-radius:6px;font-size:13px;cursor:pointer;">🖨 Print / Save as PDF</button>
+  <a href="/manager" style="margin-left:12px;padding:10px 24px;background:#f0ebe0;color:#1a2e25;border:1px solid #ccd9d3;border-radius:6px;font-size:13px;text-decoration:none;">← Back to Dashboard</a>
+</div>
+
+</body>
+</html>"""
+    return html
+
+# ─────────────────────────────────────────
+#  EXPORT ROUTES
+# ─────────────────────────────────────────
+
+# Manager — Export ALL tasks as CSV
+@app.route('/api/export/csv')
+@login_required
+@require_manager
+@csrf.exempt
+def export_csv():
+    emp_id = request.args.get('emp_id')
+    status = request.args.get('status')
+    rows   = Task.query.filter_by(assigned_to=emp_id).all() if emp_id else Task.query.all()
+    tasks  = [t.to_dict() for t in rows]
+    if status:
+        tasks = [t for t in tasks if t['status'] == status]
+    today    = date.today().strftime("%Y-%m-%d")
+    filename = f"WorkPulse_Tasks_{today}.csv"
+    return generate_csv(tasks, filename)
+
+# Manager — Export PDF productivity report
+@app.route('/api/export/pdf')
+@login_required
+@require_manager
+@csrf.exempt
+def export_pdf():
+    all_t = [t.to_dict() for t in Task.query.all()]
+    s     = stats_for(all_t)
+
+    # Build per-employee stats
+    emp_stats = []
+    for u in User.query.filter_by(role='employee').all():
+        et    = [t.to_dict() for t in Task.query.filter_by(assigned_to=u.id).all()]
+        es    = stats_for(et)
+        score = 0
+        if es['total'] > 0:
+            score += (es['done'] / es['total']) * 50
+            score -= (es['overdue'] / es['total']) * 30
+            score += min(es['done'] * 5, 40)
+            score = max(0, min(100, round(score)))
+        emp_stats.append({**u.to_dict(), **es, 'score': score})
+    emp_stats.sort(key=lambda x: -x['score'])
+
+    today = date.today().strftime("%B %Y")
+    html  = generate_pdf_html(all_t, s, emp_stats, f"Team Productivity Report — {today}")
+    return Response(html, mimetype='text/html')
+
+# Employee — Export their own tasks as CSV
+@app.route('/api/export/my-csv')
+@login_required
+@csrf.exempt
+def export_my_csv():
+    rows  = Task.query.filter_by(assigned_to=current_user.id).all()
+    tasks = [t.to_dict() for t in rows]
+    today = date.today().strftime("%Y-%m-%d")
+    name  = current_user.name.replace(' ', '_')
+    return generate_csv(tasks, f"WorkPulse_{name}_Tasks_{today}.csv")
 
 # ─────────────────────────────────────────
 #  SEED DATA
@@ -506,9 +682,7 @@ def create_my_task():
         due_date=data['due_date'],
         category=data.get('category', 'General').strip(),
         recurring=data.get('recurring', 'none'),
-        status='todo',
-        assigned_to=current_user.id,
-        created_by=current_user.id
+        status='todo', assigned_to=current_user.id, created_by=current_user.id
     )
     db.session.add(task)
     db.session.commit()

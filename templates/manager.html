@@ -16,6 +16,11 @@ header{padding:12px 24px;background:#faf7f2;border-bottom:1px solid #ccd9d3;disp
 .uname{font-size:13px;color:#1a2e25;font-weight:500;}
 .logout-btn{font-size:11px;padding:5px 12px;border-radius:6px;background:transparent;border:1px solid #ccd9d3;color:#7a9488;cursor:pointer;font-family:'Source Sans 3',sans-serif;transition:all 0.15s;}
 .logout-btn:hover{border-color:#c0392b;color:#c0392b;}
+.export-btn{font-size:11px;padding:5px 12px;border-radius:6px;cursor:pointer;font-family:'Source Sans 3',sans-serif;font-weight:600;transition:all 0.15s;text-decoration:none;display:inline-flex;align-items:center;gap:5px;}
+.export-csv{background:#e8f2ee;color:#155c44;border:1px solid rgba(21,92,68,0.3);}
+.export-csv:hover{background:#d4e8de;border-color:#155c44;}
+.export-pdf{background:#f5e9c8;color:#7a5c10;border:1px solid rgba(201,168,76,0.4);}
+.export-pdf:hover{background:#edd98a;border-color:#c9a84c;}
 /* NOTIF */
 #notif{background:#f5e9c8;border-bottom:1px solid rgba(201,168,76,0.35);padding:8px 24px;display:none;gap:14px;align-items:center;font-size:12px;color:#7a5c10;}
 #notif.show{display:flex;}
@@ -193,6 +198,9 @@ select option{background:#faf7f2;}
   <div class="hright">
     <span class="badge-mgr">🔐 Manager</span>
     <span class="uname">{{ user.name }}</span>
+    <a href="/api/export/csv" class="export-btn export-csv">📥 CSV</a>
+    <a href="/api/export/pdf" class="export-btn export-pdf" target="_blank">📄 PDF</a>
+    <a href="/api/docs" class="export-btn" style="background:#f0ebe0;color:#7a9488;border:1px solid #ccd9d3;" target="_blank">📖 API</a>
     <button class="logout-btn" onclick="logout()">Sign Out</button>
   </div>
 </header>
